@@ -7,6 +7,6 @@
 
 header http_t {
     bit<8>  method;
-    bit<16> status_code;
-    bit<32> content_length;
+    bit<16> statusCode;
+    bit<32> contentLength;
 }
