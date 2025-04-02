@@ -39,11 +39,11 @@ const nextHeader_t NEXT_HEADER_SCTP    = PROTOCOL_SCTP;
 
 header ipv6_t {
     ipVersion_t  version;
-    bit<8>       traffic_class;
-    bit<20>      flow_label;
-    bit<16>      payload_length;
-    nextHeader_t next_header;
-    bit<8>       hop_limit;
-    ip6Addr_t    src_addr;
-    ip6Addr_t    dst_addr;
+    bit<8>       trafficClass;
+    bit<20>      flowLabel;
+    bit<16>      payloadLength;
+    nextHeader_t nextHeader;
+    bit<8>       hopLimit;
+    ip6Addr_t    srcAddr;
+    ip6Addr_t    dstAddr;
 }
