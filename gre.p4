@@ -19,5 +19,5 @@ header gre_t {
     bit<16> checksum;  // Checksum (present if C=1 or R=1)  校验和 (仅当 C=1 或 R=1 时存在)
     bit<16> offset;    // Routing offset (present if R=1)   路由偏移量 (仅当 R=1 时存在)
     bit<32> key;       // Key (present if K=1)              密钥 (仅当 K=1 时存在)
-    bit<32> seqNum;   // Sequence number (present if S=1)  序列号 (仅当 S=1 时存在)
+    bit<32> seqNum;    // Sequence number (present if S=1)  序列号 (仅当 S=1 时存在)
 }
