@@ -1,54 +1,198 @@
-typedef bit<48> macAddr_t;
-typedef bit<16> etherType_t;
-typedef bit<7>  tlvType_t;
-
-// Link Layer Discovery Protocol
-header lldp_t {
-    // 目标 MAC 地址 (48 bits) - 固定为 01:80:C2:00:00:0E
-    // Destination MAC (48 bits) - Fixed to 01:80:C2:00:00:0E
-    macAddr_t   dst_mac;
-
-    // 源 MAC 地址 (48 bits) - 发送设备的 MAC 地址
-    // Source MAC (48 bits) - Sender's MAC address
-    macAddr_t   src_mac;
-
-    // 以太网类型 (16 bits) - 固定为 0x88CC
-    // EtherType (16 bits) - Fixed to 0x88CC
-    etherType_t ether_type;
-
-    // TLV 结构 (可变长度) - 包含多个 TLV 单元
-    // TLV structure (variable) - Contains multiple TLVs
-    varbit<512> tlvs;
-}
-
-header lldp_tlv_t {
-    // 类型 (7 bits) - TLV 类型标识
-    // Type (7 bits) - TLV type identifier
-    tlvType_t  type;
-
-    // 长度 (9 bits) - TLV 值的字节长度
-    // Length (9 bits) - Value field length in bytes
-    bit<9>      length;
-
-    // 值 (可变长度) - 实际 TLV 数据
-    // Value (variable) - TLV payload data
-    varbit<512> value;
-}
-
-// 关键 TLV 类型说明（可扩展）
-const tlvType_t LLDP_TLV_CHASSIS_ID   = 1;    // 机箱 ID
-const tlvType_t LLDP_TLV_PORT_ID      = 2;    // 端口 ID
-const tlvType_t LLDP_TLV_TTL          = 3;    // 存活时间(秒)
-const tlvType_t LLDP_TLV_PORT_DESC    = 4;    // 端口描述
-const tlvType_t LLDP_TLV_SYSTEM_NAME  = 5;    // 系统名称
-const tlvType_t LLDP_TLV_SYSTEM_DESC  = 6;    // 系统描述
-const tlvType_t LLDP_TLV_CAPABILITIES = 7;    // 设备能力
-const tlvType_t LLDP_TLV_MGMT_ADDR    = 8;    // 管理地址
-const tlvType_t LLDP_TLV_ORG_SPECIFIC = 127;  // 厂商自定义
-
-/**
- * 典型应用场景
- *   1. 拓扑发现（通过 `SYSTEM_NAME` 和 `PORT_ID`）
- *   2. 故障诊断（通过 `TTL` 超时检测链路故障）
- *   3. 网络策略自动配置（通过 `CAPABILITIES` 字段）
+/​**​
+ * LLDP Header Definition in P4
+ * Link Layer Discovery Protocol for network device discovery
+ * 
+ * Note: LLDP is a vendor-neutral protocol that allows network devices to advertise information
+ *       about themselves to other devices on the same LAN (EtherType 0x88CC)
  */
+
+/* LLDP TLV Types */
+enum lldp_tlv_type {
+    END_OF_LLDPDU = 0,       // End marker
+    CHASSIS_ID = 1,           // Chassis identifier
+    PORT_ID = 2,              // Port identifier
+    TIME_TO_LIVE = 3,         // Time to live
+    PORT_DESCRIPTION = 4,     // Port description
+    SYSTEM_NAME = 5,          // System name
+    SYSTEM_DESCRIPTION = 6,   // System description
+    SYSTEM_CAPABILITIES = 7,  // System capabilities
+    MANAGEMENT_ADDRESS = 8    // Management address
+};
+
+/* LLDP Chassis ID Subtypes */
+enum lldp_chassis_subtype {
+    CHASSIS_RESERVED = 0,   // Reserved
+    CHASSIS_COMPONENT = 1,  // Chassis component
+    CHASSIS_IFALIAS = 2,    // Interface alias
+    CHASSIS_PORT = 3,       // Port component
+    CHASSIS_MAC = 4,        // MAC address
+    CHASSIS_NETADDR = 5,    // Network address
+    CHASSIS_IFNAME = 6,     // Interface name
+    CHASSIS_LOCAL = 7       // Locally assigned
+};
+
+/* LLDP Port ID Subtypes */
+enum lldp_port_subtype {
+    PORT_RESERVED = 0,     // Reserved
+    PORT_IFALIAS = 1,      // Interface alias
+    PORT_COMPONENT = 2,    // Port component
+    PORT_MAC = 3,          // MAC address
+    PORT_NETADDR = 4,      // Network address
+    PORT_IFNAME = 5,       // Interface name
+    PORT_CIRCUIT = 6,      // Circuit ID
+    PORT_LOCAL = 7         // Locally assigned
+};
+
+/​**​
+ * LLDP Basic TLV Header (2+ bytes)
+ * Type-Length-Value format for all LLDP elements
+ */
+header lldp_tlv {
+    bit<7> type;            // TLV type (lldp_tlv_type)
+    bit<9> length;          // Length of value field (0-511 bytes)
+    bit<8> value[];         // TLV value (variable length)
+};
+
+/​**​
+ * LLDP Chassis ID TLV (3+ bytes)
+ * Chassis identifier information
+ */
+header lldp_chassis_id {
+    bit<7> type = CHASSIS_ID;  // Fixed type 1
+    bit<9> length;             // Length of subtype + value
+    bit<8> subtype;            // Chassis subtype (lldp_chassis_subtype)
+    bit<8> value[];            // Chassis ID (variable length)
+};
+
+/​**​
+ * LLDP Port ID TLV (3+ bytes)
+ * Port identifier information
+ */
+header lldp_port_id {
+    bit<7> type = PORT_ID;  // Fixed type 2
+    bit<9> length;          // Length of subtype + value
+    bit<8> subtype;         // Port subtype (lldp_port_subtype)
+    bit<8> value[];         // Port ID (variable length)
+};
+
+/​**​
+ * LLDP Time To Live TLV (4 bytes)
+ * Lifetime of LLDP information
+ */
+header lldp_ttl {
+    bit<7>  type = TIME_TO_LIVE;  // Fixed type 3
+    bit<9>  length = 2;           // Always 2 bytes
+    bit<16> ttl;                  // Time to live in seconds
+};
+
+/​**​
+ * LLDP System Capabilities TLV (6 bytes)
+ * Device capability bitmap
+ */
+header lldp_sys_cap {
+    bit<7>  type = SYSTEM_CAPABILITIES;  // Fixed type 7
+    bit<9>  length = 4;                  // Always 4 bytes
+    bit<16> capabilities;                // Capability bitmap
+    bit<16> enabled;                     // Enabled capability bitmap
+};
+
+/​**​
+ * LLDP Management Address TLV (9+ bytes)
+ * Management address information
+ */
+header lldp_mgmt_addr {
+    bit<7>  type = MANAGEMENT_ADDRESS;  // Fixed type 8
+    bit<9>  length;                     // Length of address info
+    bit<8>  addr_len;                   // Address length (1-31)
+    bit<8>  addr_subtype;               // Address subtype (1=IPv4, 2=IPv6)
+    bit<8>  addr[];                     // Management address
+    bit<8>  if_subtype;                 // Interface numbering subtype
+    bit<32> if_number;                  // Interface number
+    bit<8>  oid_len;                    // OID length (0-128)
+    bit<8>  oid[];                      // Object identifier
+};
+
+/​**​
+ * LLDP Transport Header (Ethernet)
+ */
+header lldp_transport {
+    bit<48> dst_mac = 0x0180C200000E;  // LLDP multicast MAC
+    bit<48> src_mac;                   // Source MAC address
+    bit<16> eth_type = 0x88CC;         // LLDP EtherType
+};
+
+/​**​
+ * P4 Parser Logic for LLDP
+ */
+parser lldp_parser(packet_in pkt, out headers hdr) {
+    state start {
+        pkt.extract(hdr.lldp_transport);
+        transition parse_lldp;
+    }
+    
+    state parse_lldp {
+        pkt.extract(hdr.lldp_tlv);
+        transition select(hdr.lldp_tlv.type) {
+            CHASSIS_ID: parse_chassis_id;
+            PORT_ID: parse_port_id;
+            TIME_TO_LIVE: parse_ttl;
+            END_OF_LLDPDU: accept;
+            default: parse_generic_tlv;
+        }
+    }
+    
+    state parse_chassis_id {
+        pkt.extract(hdr.lldp_chassis_id);
+        transition parse_lldp;
+    }
+    
+    // Additional parse states for other TLV types...
+}
+
+/​**​
+ * P4 Match-Action Pipeline for LLDP
+ */
+control lldp_control(inout headers hdr) {
+    action process_lldp_pdu() {
+        // Process received LLDP information
+        neighbor_db.update(
+            hdr.lldp_chassis_id.value,
+            hdr.lldp_port_id.value,
+            hdr.lldp_ttl.ttl
+        );
+    }
+    
+    action generate_lldp_frame() {
+        // Generate LLDP advertisement
+        hdr.lldp_transport.src_mac = device_mac;
+        hdr.lldp_chassis_id.subtype = CHASSIS_MAC;
+        hdr.lldp_chassis_id.value = device_mac;
+        hdr.lldp_port_id.subtype = PORT_IFNAME;
+        hdr.lldp_port_id.value = port_name;
+        hdr.lldp_ttl.ttl = lldp_hold_time;
+    }
+    
+    action filter_lldp_traffic() {
+        // Apply LLDP filtering policies
+        if (!authorized_device(hdr.lldp_chassis_id.value)) {
+            drop();
+        }
+    }
+    
+    table lldp_processing {
+        key = {
+            hdr.lldp_tlv.type: exact;
+        }
+        actions = {
+            process_lldp_pdu;
+            generate_lldp_frame;
+            filter_lldp_traffic;
+            NoAction;
+        }
+        default_action = NoAction;
+    }
+    
+    apply {
+        lldp_processing.apply();
+    }
+}
