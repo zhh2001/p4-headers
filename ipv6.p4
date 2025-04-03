@@ -1,49 +1,171 @@
-/* P4_16 */
+/​**​
+ * IPv6 Header Definition in P4
+ * Internet Protocol version 6 header for next-generation networking
+ * 
+ * Note: IPv6 provides expanded addressing (128-bit), simplified header structure,
+ *       and built-in support for extension headers
+ */
 
-#define V1MODEL_VERSION 20250101
+/* IPv6 Protocol Numbers */
+enum ipv6_next_header {
+    HOP_BY_HOP = 0,   // Hop-by-Hop Options
+    ICMPv6 = 58,      // ICMP for IPv6
+    TCP = 6,          // Same value as IPv4
+    UDP = 17,         // Same value as IPv4
+    ROUTING = 43,     // Routing Header
+    FRAGMENT = 44,    // Fragmentation Header
+    ESP = 50,         // Encapsulating Security Payload
+    AH = 51,          // Authentication Header
+    NONE = 59,        // No Next Header
+    DST_OPTIONS = 60  // Destination Options
+};
 
-#include <core.p4>
-#include <v1model.p4>
+/* IPv6 Traffic Class */
+enum ipv6_traffic_class {
+    BACKGROUND = 0x0,   // Background traffic
+    BEST_EFFORT = 0x1,  // Default class
+    VIDEO = 0x4,        // Video streaming
+    VOICE = 0x6,        // Voice traffic
+    CONTROL = 0x7       // Network control
+};
 
-typedef bit<4>   ipVersion_t;
-typedef bit<8>   protocol_t;
-typedef bit<8>   nextHeader_t;
-typedef bit<128> ip6Addr_t;
+/​**​
+ * IPv6 Base Header (40 bytes)
+ * Fixed-length mandatory header
+ */
+header ipv6_header {
+    bit<4>   version = 6;     // Version (6)
+    bit<8>   traffic_class;   // Traffic class (ipv6_traffic_class)
+    bit<20>  flow_label;      // Flow label
+    bit<16>  payload_length;  // Extension headers + payload length
+    bit<8>   next_header;     // Next header type (ipv6_next_header)
+    bit<8>   hop_limit;       // Hop limit (replaces TTL)
+    bit<128> src_addr;        // Source IPv6 address
+    bit<128> dst_addr;        // Destination IPv6 address
+};
 
-// IPv4 协议的 protocol 字段取值
-const protocol_t PROTOCOL_ICMP = 8w0d1;    // Internet Control Message Protocol     互联网控制报文协议‌
-const protocol_t PROTOCOL_IGMP = 8w0d2;    // Internet Group Management Protocol    组播协议
-const protocol_t PROTOCOL_TCP  = 8w0d6;    // Transmission Control Protocol         传输控制协议
-const protocol_t PROTOCOL_UDP  = 8w0d17;   // User Datagram Protocol                用户数据报协议
-const protocol_t PROTOCOL_GRE  = 8w0d47;   // Generic Routing Encapsulation         通用路由封装
-const protocol_t PROTOCOL_ESP  = 8w0d50;   // Encapsulating Security Payload        封装安全载荷
-const protocol_t PROTOCOL_AH   = 8w0d51;   // Authentication Header                 认证标头
-const protocol_t PROTOCOL_OSPF = 8w0d89;   // Open Shortest Path First              开放式最短路径优先
-const protocol_t PROTOCOL_SCTP = 8w0d132;  // Stream Control Transmission Protocol  流控制传输协议
+/​**​
+ * IPv6 Hop-by-Hop Options Header (Variable length)
+ * Optional extension header
+ */
+header ipv6_hop_options {
+    bit<8> next_header;    // Next header type
+    bit<8> hdr_ext_len;    // Header extension length (in 8-byte units)
+    bit<8> options[];      // Variable-length options
+};
 
-// IPv6 协议的 next_header 字段取值
-const nextHeader_t NEXT_HEADER_HOP_OPT = 8w0d0;          // Hop-by-Hop Options
-const nextHeader_t NEXT_HEADER_ICMP    = PROTOCOL_ICMP;
-const nextHeader_t NEXT_HEADER_IGMP    = PROTOCOL_IGMP;
-const nextHeader_t NEXT_HEADER_TCP     = PROTOCOL_TCP;
-const nextHeader_t NEXT_HEADER_UDP     = PROTOCOL_UDP;
-const nextHeader_t NEXT_HEADER_ROUTING = 8w0d43;         // Routing Header
-const nextHeader_t NEXT_HEADER_FRAG    = 8w0d44;         // Fragment Header
-const nextHeader_t NEXT_HEADER_GRE     = PROTOCOL_GRE;
-const nextHeader_t NEXT_HEADER_ESP     = PROTOCOL_ESP;
-const nextHeader_t NEXT_HEADER_AH      = PROTOCOL_AH;
-const nextHeader_t NEXT_HEADER_NONE    = 8w0d59;         // No Next Header
-const nextHeader_t NEXT_HEADER_DST_OPT = 8w0d60;         // Destination Options
-const nextHeader_t NEXT_HEADER_OSPF    = PROTOCOL_OSPF;
-const nextHeader_t NEXT_HEADER_SCTP    = PROTOCOL_SCTP;
+/​**​
+ * IPv6 Fragment Header (8 bytes)
+ * Fragmentation/reassembly support
+ */
+header ipv6_fragment {
+    bit<8>  next_header;     // Next header type
+    bit<8>  reserved;        // Reserved field
+    bit<16> frag_offset;     // Fragment offset (in 8-byte units)
+    bit<1>  reserved2;       // Reserved
+    bit<1>  m_flag;          // More fragments flag
+    bit<30> identification;  // Packet identifier
+};
 
-header ipv6_t {
-    ipVersion_t  version;
-    bit<8>       trafficClass;
-    bit<20>      flowLabel;
-    bit<16>      payloadLength;
-    nextHeader_t nextHeader;
-    bit<8>       hopLimit;
-    ip6Addr_t    srcAddr;
-    ip6Addr_t    dstAddr;
+/​**​
+ * Ethernet Header (14 bytes)
+ * Ethernet encapsulation for IPv6
+ */
+header ethernet_header {
+    bit<48> dst_mac;   // Destination MAC
+    bit<48> src_mac;   // Source MAC
+    bit<16> ether_type = 0x86DD;  // IPv6 type
+};
+
+/​**​
+ * P4 Parser Logic for IPv6
+ */
+parser ipv6_parser(packet_in pkt, out headers hdr) {
+    state start {
+        pkt.extract(hdr.ethernet_header);
+        transition parse_ipv6;
+    }
+    
+    state parse_ipv6 {
+        pkt.extract(hdr.ipv6_header);
+        transition select(hdr.ipv6_header.next_header) {
+            HOP_BY_HOP: parse_hop_options;
+            FRAGMENT: parse_fragment;
+            default: parse_upper_layer;
+        }
+    }
+    
+    state parse_hop_options {
+        pkt.extract(hdr.ipv6_hop_options);
+        transition select(hdr.ipv6_hop_options.next_header) {
+            FRAGMENT: parse_fragment;
+            default: parse_upper_layer;
+        }
+    }
+    
+    state parse_fragment {
+        pkt.extract(hdr.ipv6_fragment);
+        transition parse_upper_layer;
+    }
+    
+    state parse_upper_layer {
+        transition select(hdr.ipv6_header.next_header) {
+            TCP: parse_tcp;
+            UDP: parse_udp;
+            ICMPv6: parse_icmpv6;
+            default: accept;
+        }
+    }
+    
+    // Additional parse states for upper layer protocols...
+}
+
+/​**​
+ * P4 Match-Action Pipeline for IPv6
+ */
+control ipv6_control(inout headers hdr) {
+    action route_ipv6() {
+        // IPv6 routing with 128-bit addresses
+        standard_metadata.egress_spec = 
+            ipv6_route_table[hdr.ipv6_header.dst_addr];
+    }
+    
+    action decrement_hop_limit() {
+        // Hop limit processing (similar to TTL)
+        hdr.ipv6_header.hop_limit = hdr.ipv6_header.hop_limit - 1;
+    }
+    
+    action process_flow_label() {
+        // Flow-based forwarding handling
+        if (hdr.ipv6_header.flow_label != 0) {
+            apply_flow_routing(hdr.ipv6_header.flow_label);
+        }
+    }
+    
+    action handle_fragmentation() {
+        // IPv6 fragmentation (only by source)
+        if (hdr.ipv6_fragment.m_flag == 1) {
+            process_fragment(hdr.ipv6_fragment.identification);
+        }
+    }
+    
+    table ipv6_processing {
+        key = {
+            hdr.ipv6_header.dst_addr: lpm;  // 128-bit LPM
+            hdr.ipv6_header.next_header: exact;
+            hdr.ipv6_header.flow_label: exact;  // Optional
+        }
+        actions = {
+            route_ipv6;
+            decrement_hop_limit;
+            process_flow_label;
+            handle_fragmentation;
+            NoAction;
+        }
+        default_action: NoAction;
+    }
+    
+    apply {
+        ipv6_processing.apply();
+    }
 }
