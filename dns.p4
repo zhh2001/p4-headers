@@ -1,24 +1,180 @@
-/* P4_16 */
+/​**​
+ * DNS Header Definition in P4
+ * Domain Name System protocol for name resolution
+ * 
+ * Note: DNS uses both UDP/53 (standard queries) and TCP/53 (zone transfers)
+ */
 
-#define V1MODEL_VERSION 20250101
+/* DNS Opcode Types */
+enum dns_opcode {
+    QUERY  = 0,     / Standard query
+    IQUERY = 1,    // Inverse query (obsolete)
+    STATUS = 2,    // Server status request
+    UPDATE = 5     // Dynamic update
+};
 
-#include <core.p4>
-#include <v1model.p4>
+/* DNS Response Codes */
+enum dns_rcode {
+    NO_ERROR     = 0,  // No error condition
+    FORMAT_ERROR = 1,  // Query format error
+    SERV_FAIL    = 2,  // Server failure
+    NXDOMAIN     = 3,  // Non-existent domain
+    NOT_IMP      = 4,  // Not implemented
+    REFUSED      = 5   // Query refused
+};
 
-// Domain Name System Header - Used for domain name resolution and reverse resolution
-// 域名系统协议报头 - 用于域名解析和反向解析
-header dns_t {
-    bit<16> id;       // Query ID (matches request/response)                                  查询ID (用于匹配请求和响应)
-    bit<1>  qr;       // Query/Response Flag (0=query, 1=response)                            查询/响应标志 (0=查询, 1=响应)
-    bit<4>  opcode;   // Opcode (Standard query=0, Inverse query=1, Server status request=2)  操作码 (标准查询=0, 反向查询=1, 服务器状态请求=2)
-    bit<1>  aa;       // Authoritative Answer Flag (valid in responses)                       授权回答标志 (仅响应有效)
-    bit<1>  tc;       // Truncated Flag (set if packet exceeds 512 bytes)                     截断标志 (报文超过 512 字节时设置)
-    bit<1>  rd;       // Recursion Desired Flag (client requests recursion)                   递归查询标志 (客户端请求递归解析)
-    bit<1>  ra;       // Recursion Available Flag (server supports recursion)                 递归可用标志 (服务器支持递归解析)
-    bit<3>  z;        // Reserved Field (must be 0)                                           保留字段 (必须为 0)
-    bit<4>  rcode;    // Return Code (0=no error, 1=format error, 2=server failure, ...)      返回码 (0=无错误, 1=格式错误, 2=服务器故障, ...)
-    bit<16> qdcount;  // Number of questions                                                  查询问题数
-    bit<16> ancount;  // Number of answer resource records                                    回答资源记录数
-    bit<16> nscount;  // Number of authority resource records                                 授权记录数
-    bit<16> arcount;  // Number of additional resource records                                附加记录数
+/* DNS Query Types */
+enum dns_qtype {
+    A = 1,        // IPv4 address
+    NS = 2,       // Name server
+    CNAME = 5,    // Canonical name
+    SOA = 6,      // Start of authority
+    MX = 15,      // Mail exchange
+    AAAA = 28,    // IPv6 address
+    ANY = 255     // All records
+};
+
+/​**​
+ * DNS Header (12 bytes)
+ * Fixed header for all DNS messages
+ */
+header dns_header {
+    bit<16> transaction_id;  // Query/response matching
+    bit<1>  qr;              // Query (0) or Response (1)
+    bit<4>  opcode;          // Message type (dns_opcode)
+    bit<1>  aa;              // Authoritative answer
+    bit<1>  tc;              // Truncated
+    bit<1>  rd;              // Recursion desired
+    bit<1>  ra;              // Recursion available
+    bit<3>  z;               // Reserved (must be zero)
+    bit<4>  rcode;           // Response code (dns_rcode)
+    bit<16> qdcount;  // Question entries count
+    bit<16> ancount;  // Answer RRs count
+    bit<16> nscount;  // Authority RRs count
+    bit<16> arcount;  // Additional RRs count
+};
+
+/​**​
+ * DNS Question Section (Variable length)
+ * Query parameters
+ */
+header dns_question {
+    bit<8>  qname[];   // Domain name (labels)
+    bit<16> qtype;     // Query type (dns_qtype)
+    bit<16> qclass;    // Query class (usually 1=IN)
+};
+
+/​**​
+ * DNS Resource Record (Variable length)
+ * Answer/authority/additional records
+ */
+header dns_rr {
+    bit<8>  name[];    // Domain name
+    bit<16> type;      // RR type (dns_qtype)
+    bit<16> class;     // RR class
+    bit<32> ttl;       // Time to live
+    bit<16> rdlength;  // Resource data length
+    bit<8>  rdata[];   // Resource data
+};
+
+/​**​
+ * UDP Transport Header (8 bytes)
+ * Standard UDP header for DNS
+ */
+header udp_header {
+    bit<16> src_port;       // Source port
+    bit<16> dst_port = 53;  // DNS port
+    bit<16> length;         // UDP length
+    bit<16> checksum;       // UDP checksum
+};
+
+/​**​
+ * P4 Parser Logic for DNS
+ */
+parser dns_parser(packet_in pkt, out headers hdr) {
+    state start {
+        pkt.extract(hdr.udp_header);
+        transition select(hdr.udp_header.dst_port) {
+            53: parse_dns;
+            default: accept;
+        }
+    }
+    
+    state parse_dns {
+        pkt.extract(hdr.dns_header);
+        transition parse_questions;
+    }
+    
+    state parse_questions {
+        // Parse each question entry
+        if (hdr.dns_header.qdcount > 0) {
+            pkt.extract(hdr.dns_question);
+            hdr.dns_header.qdcount = hdr.dns_header.qdcount - 1;
+            transition parse_questions;
+        } else {
+            transition parse_answers;
+        }
+    }
+    
+    state parse_answers {
+        // Parse answer/authority/additional records
+        if (hdr.dns_header.ancount > 0 || hdr.dns_header.nscount > 0 || hdr.dns_header.arcount > 0) {
+            pkt.extract(hdr.dns_rr);
+            // Update counters based on section...
+            transition parse_answers;
+        } else {
+            transition accept;
+        }
+    }
+}
+
+/​**​
+ * P4 Match-Action Pipeline for DNS
+ */
+control dns_control(inout headers hdr) {
+    action process_query() {
+        // Handle DNS query
+        if (hdr.dns_question.qtype == AAAA) {
+            handle_ipv6_query(hdr.dns_question.qname);
+        } else {
+            handle_standard_query(hdr.dns_question.qname);
+        }
+    }
+    
+    action generate_response() {
+        // Build DNS response
+        hdr.dns_header.qr = 1;
+        hdr.dns_header.ra = 1;
+        if (cache_hit) {
+            hdr.dns_header.aa = 1;
+        }
+        // Add answer records...
+    }
+    
+    action validate_dns_packet() {
+        // Basic DNS validation
+        if (hdr.dns_header.z != 0) {
+            hdr.dns_header.rcode = FORMAT_ERROR;
+        }
+    }
+    
+    table dns_processing {
+        key = {
+            hdr.dns_header.qr: exact;
+            hdr.dns_question.qtype: exact;
+        }
+        actions = {
+            process_query;
+            generate_response;
+            validate_dns_packet;
+            NoAction;
+        }
+        default_action: NoAction;
+    }
+    
+    apply {
+        if (hdr.dns_header.qdcount > 0) {
+            dns_processing.apply();
+        }
+    }
 }
