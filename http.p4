@@ -1,25 +1,177 @@
-/* P4_16 */
+/​**​
+ * HTTP/1.1 Header Definition in P4
+ * Hypertext Transfer Protocol version 1.1
+ * 
+ * Note: HTTP/1.1 is the most widely deployed HTTP version with persistent connections
+ *       and chunked transfer encoding support
+ */
 
-#define V1MODEL_VERSION 20250101
+/* HTTP/1.1 Methods */
+enum http_method {
+    GET     = 0,
+    POST    = 1,
+    PUT     = 2,
+    DELETE  = 3,
+    HEAD    = 4,
+    OPTIONS = 5,
+    CONNECT = 6,
+    TRACE   = 7,
+    PATCH   = 8
+};
 
-#include <core.p4>
-#include <v1model.p4>
+/* HTTP/1.1 Connection Flags */
+enum http_connection_flags {
+    CONN_CLOSE = 0x1,      // Connection: close
+    CONN_KEEPALIVE = 0x2,  // Connection: keep-alive
+    CHUNKED = 0x4          // Transfer-Encoding: chunked
+};
 
-header http_request_t {
-    bit<8>   method;          // HTTP Method (e.g., GET=1, POST=2, PUT=3, DELETE=4)     HTTP 方法 (如 GET=1, POST=2, PUT=3, DELETE=4)
-    bit<128> uri;             // Request URI (e.g., "/index.html", "/api/data")         请求URI (如"/index.html", "/api/data")
-    bit<32>  version;         // HTTP Version (e.g., 0x0100=HTTP/1.0, 0x0110=HTTP/1.1)  HTTP 版本 (如 0x0100=HTTP/1.0, 0x0110=HTTP/1.1)
-    bit<32>  headers_length;  // Total length of headers (for fast parsing)             报头总长度 (用于快速解析)
+/​**​
+ * HTTP/1.1 Request Line (Variable length)
+ * Start line for HTTP requests
+ */
+header http_request_line {
+    bit<8> method;       // Request method (http_method)
+    bit<8> uri[];        // Request URI (variable length)
+    bit<8> version[];    // HTTP version (e.g. "HTTP/1.1")
+};
 
-    // 常见 HTTP 头部字段 (可扩展为动态字段)
-    bit<128> host;            // Hostname (e.g., "www.example.com")                                            主机名 (如 "www.example.com")
-    bit<8>   connection;      // Connection Type (e.g., "keep-alive=1", "close=0")                             连接类型 (如 "keep-alive=1", "close=0")
-    bit<32>  content_length;  // Length of the request body (valid for POST/PUT methods)                       请求体长度 (仅在 POST/PUT 等方法中有效)
-    bit<128> user_agent;      // User Agent (e.g., "Mozilla/5.0")  用户代理 (如"Mozilla/5.0")
-    bit<128> accept;          // Accepted content types (e.g., "text/html", "application/json")                接受的内容类型 (如 "text/html", "application/json")
-    bit<128> content_type;    // Content type of the request body (e.g., "application/x-www-form-urlencoded")  请求体类型 (如 "application/x-www-form-urlencoded")
-    bit<32>  authorization;   // Authorization information (e.g., Bearer Token)  认证信息 (如 Bearer Token)
+/​**​
+ * HTTP/1.1 Status Line (Variable length)
+ * Start line for HTTP responses
+ */
+header http_status_line {
+    bit<8>  version[];    // HTTP version
+    bit<16> status_code;  // Status code (200, 404, etc.)
+    bit<8>  reason[];     // Status text
+};
 
-    // 可选字段 (动态扩展)
-    bit<variable> options;  // Other optional header fields  其他可选头部字段
+/​**​
+ * HTTP/1.1 Header Field (Variable length)
+ * Single header key-value pair
+ */
+header http_header_field {
+    bit<8> name[];     // Header name
+    bit<8> value[];    // Header value
+};
+
+/​**​
+ * HTTP/1.1 Chunk Header (Variable length)
+ * Chunked transfer encoding metadata
+ */
+header http_chunk_header {
+    bit<32> chunk_size;  // Chunk size in hex
+    bit<8> ext[];        // Optional chunk extensions
+};
+
+/​**​
+ * TCP Transport Header (20 bytes)
+ * Standard TCP header for HTTP/1.1
+ */
+header tcp_transport {
+    bit<16> src_port;     // Source port
+    bit<16> dst_port;     // Destination port (80 or 443)
+    bit<32> seq_num;      // Sequence number
+    bit<32> ack_num;      // Acknowledgment number
+    bit<4>  data_offset;  // Data offset
+    bit<6>  reserved;     // Reserved bits
+    bit<6>  flags;        // TCP flags
+    bit<16> window;       // Receive window
+    bit<16> checksum;     // Checksum
+    bit<16> urgent_ptr;   // Urgent pointer
+};
+
+/​**​
+ * P4 Parser Logic for HTTP/1.1
+ */
+parser http11_parser(packet_in pkt, out headers hdr) {
+    state start {
+        pkt.extract(hdr.tcp_transport);
+        transition select(hdr.tcp_transport.dst_port) {
+            80: parse_http11;  // HTTP
+            443: parse_http11;  // HTTPS (after decryption)
+            default: accept;
+        }
+    }
+    
+    state parse_http11 {
+        // Peek first byte to determine request/response
+        bit<8> first_byte;
+        pkt.lookahead(first_byte);
+        
+        // Check if first character is letter (request) or 'H' (response)
+        transition select(first_byte) {
+            0x48: parse_status_line;  // 'H' from "HTTP/"
+            default: parse_request_line;
+        }
+    }
+    
+    state parse_request_line {
+        pkt.extract(hdr.http_request_line);
+        transition parse_headers;
+    }
+    
+    state parse_status_line {
+        pkt.extract(hdr.http_status_line);
+        transition parse_headers;
+    }
+    
+    // Additional parse states for headers and body...
+}
+
+/​**​
+ * P4 Match-Action Pipeline for HTTP/1.1
+ */
+control http11_control(inout headers hdr) {
+    action process_request() {
+        // Route based on HTTP method and URI
+        route_http_request(
+            hdr.http_request_line.method,
+            hdr.http_request_line.uri
+        );
+    }
+    
+    action process_response() {
+        // Handle response based on status code
+        handle_http_response(
+            hdr.http_status_line.status_code
+        );
+    }
+    
+    action parse_header_field() {
+        // Process individual header field
+        process_http_header(
+            hdr.http_header_field.name,
+            hdr.http_header_field.value
+        );
+    }
+    
+    action handle_chunked() {
+        // Process chunked transfer encoding
+        if (hdr.http_chunk_header.chunk_size == 0) {
+            end_of_chunks();
+        } else {
+            process_chunk(hdr.http_chunk_header.chunk_size);
+        }
+    }
+    
+    table http11_processing {
+        key = {
+            hdr.tcp_transport.dst_port: exact;
+            hdr.http_request_line.method: exact;  // For requests
+            hdr.http_status_line.status_code: exact;  // For responses
+        }
+        actions = {
+            process_request;
+            process_response;
+            parse_header_field;
+            handle_chunked;
+            NoAction;
+        }
+        default_action = NoAction;
+    }
+    
+    apply {
+        http11_processing.apply();
+    }
 }
