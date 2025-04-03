@@ -1,34 +1,231 @@
-// Open Shortest Path First
-header ospf_t {
-    // 版本号 (8 bits) - OSPF 协议版本（通常为 2 或 3）
-    // Version (8 bits) - OSPF protocol version (typically 2 or 3)
-    bit<8>   version;
+/​**​
+ * OSPF Header Definition in P4
+ * Open Shortest Path First routing protocol for intra-domain routing
+ * 
+ * Note: OSPF is a link-state IGP that uses Dijkstra's algorithm to calculate
+ *       the shortest path tree. It operates directly over IP (protocol 89).
+ */
 
-    // 类型 (8 bits) - 报文类型：HELLO/DD/LSR/LSU/LSAck
-    // Type (8 bits) - Packet type: HELLO/DD/LSR/LSU/LSAck
-    bit<8>   type;
+/* OSPF Packet Types */
+enum ospf_packet_type {
+    HELLO     = 1,   // Discover/maintain neighbors
+    DB_DESC   = 2,   // Database description
+    LS_REQ    = 3,   // Link-state request
+    LS_UPDATE = 4,   // Link-state update
+    LS_ACK    = 5    // Link-state acknowledgment
+};
 
-    // 报文长度 (16 bits) - 包含 OSPF 头部的总长度
-    // Packet length (16 bits) - Total length including OSPF header
-    bit<16>  length;
+/* OSPF Area Types */
+enum ospf_area_type {
+    NORMAL = 0,      // Regular OSPF area
+    STUB   = 1,      // Stub area (no external routes)
+    NSSA   = 2       // Not-so-stubby area
+};
 
-    // 路由器ID (32 bits) - 发送者的 OSPF 路由器 ID
-    // Router ID (32 bits) - Sender's OSPF router identifier
-    bit<32>  router_id;
+/* OSPF Interface Types */
+enum ospf_interface_type {
+    BROADCAST           = 1,  // Ethernet-style broadcast
+    POINT_TO_POINT      = 2,  // PPP/HDLC links
+    NBMA                = 3,  // Non-broadcast multi-access
+    POINT_TO_MULTIPOINT = 4,
+    VIRTUAL             = 5   // Virtual links
+};
 
-    // 区域ID (32 bits) - 所属 OSPF 区域
-    // Area ID (32 bits) - Associated OSPF area
-    bit<32>  area_id;
+/​**​
+ * OSPF Common Header (24 bytes)
+ * Every OSPF packet starts with this header
+ */
+header ospf_header {
+    bit<8>  version;     // OSPF version (2 for OSPFv2)
+    bit<8>  type;        // Packet type (ospf_packet_type)
+    bit<16> length;      // Packet length including header
+    bit<32> router_id;   // Router ID (IPv4 address format)
+    bit<32> area_id;     // Area identifier (0.0.0.0 for backbone)
+    bit<16> checksum;    // Standard IP checksum
+    bit<16> auth_type;   // Authentication type (0=none, 1=simple, 2=MD5)
+    bit<64> auth_data;   // Authentication data (depends on auth_type)
+};
 
-    // 校验和 (16 bits) - 整个 OSPF 报文的校验和
-    // Checksum (16 bits) - Checksum of entire OSPF packet
-    bit<16>  checksum;
+/​**​
+ * OSPF Hello Packet (44+ bytes)
+ * Used for neighbor discovery/maintenance
+ */
+header ospf_hello {
+    bit<32> network_mask;       // Network mask of originating interface
+    bit<16> hello_interval;     // Seconds between hellos
+    bit<8>  options;            // Optional capabilities
+    bit<8>  priority;           // Router priority for DR election
+    bit<32> dead_interval;      // Seconds before declaring neighbor down
+    bit<32> designated_router;  // DR router ID
+    bit<32> backup_dr;          // BDR router ID
+    bit<32> neighbors[];        // List of neighbor router IDs
+};
 
-    // 认证类型 (16 bits) - 0=无认证 1=简单密码 2=MD5
-    // Auth type (16 bits) - 0=None 1=Simple 2=MD5
-    bit<16>  auth_type;
+/​**​
+ * OSPF Database Description Packet (8+ bytes)
+ * Used for LSDB synchronization
+ */
+header ospf_db_desc {
+    bit<16> mtu;            // Interface MTU
+    bit<8>  options;        // Optional capabilities
+    bit<8>  flags;          // [I=init, M=more, MS=master/slave]
+    bit<32> dd_seq;         // Sequence number
+    bit<8>  lsa_headers[];  // List of LSA headers
+};
 
-    // 认证数据 (64 bits) - 密码或 MD5 摘要
-    // Authentication (64 bits) - Password or MD5 digest
-    bit<64>  authentication;
+/​**​
+ * OSPF Link State Request Packet (Variable length)
+ * Requests specific LSAs from neighbor
+ */
+header ospf_ls_request {
+    bit<32> entries[];  // List of [type, id, adv_router] tuples
+};
+
+/​**​
+ * OSPF Link State Update Packet (Variable length)
+ * Carries one or more LSAs
+ */
+header ospf_ls_update {
+    bit<32> num_lsas;   // Number of LSAs in this update
+    bit<8>  lsas[];     // List of LSAs (variable length)
+};
+
+/​**​
+ * OSPF Link State Acknowledgment Packet (Variable length)
+ * Acknowledges receipt of LSAs
+ */
+header ospf_ls_ack {
+    bit<8> lsa_headers[];  // List of LSA headers being acknowledged
+};
+
+/​**​
+ * OSPF LSA Header (20 bytes)
+ * Common header for all LSA types
+ */
+header ospf_lsa_header {
+    bit<16> age;         // Seconds since originated
+    bit<8>  options;     // Optional capabilities
+    bit<8>  type;        // LSA type (1=router, 2=network, etc.)
+    bit<32> id;          // LSA identifier (depends on type)
+    bit<32> adv_router;  // Advertising router ID
+    bit<32> seq_num;     // LSA sequence number
+    bit<16> checksum;    // Fletcher checksum of LSA
+    bit<16> length;      // Length of full LSA including header
+};
+
+/​**​
+ * OSPF Router LSA (Variable length)
+ * Describes router's links to area
+ */
+header ospf_router_lsa {
+    bit<16> flags;      // [V=virtual link, E=ASBR, B=ABR]
+    bit<16> num_links;  // Number of router links
+    bit<8>  links[];    // List of router links (variable length)
+};
+
+/​**​
+ * OSPF Network LSA (Variable length)
+ * Describes multi-access network
+ */
+header ospf_network_lsa {
+    bit<32> network_mask;  // Network mask for this network
+    bit<32> routers[];     // List of router IDs on network
+};
+
+/​**​
+ * OSPF Summary LSA (Variable length)
+ * Describes inter-area routes (Type 3/4)
+ */
+header ospf_summary_lsa {
+    bit<32> network_mask;   // Network mask for this route
+    bit<8>  metric;         // Cost to destination
+    bit<24> padding;        // Must be 0
+};
+
+/​**​
+ * OSPF External LSA (Variable length)
+ * Describes AS external routes (Type 5)
+ */
+header ospf_external_lsa {
+    bit<32> network_mask;   // Network mask for this route
+    bit<8>  flags;          // [E=external metric type]
+    bit<24> metric;         // Route cost
+    bit<32> fwd_addr;       // Forwarding address
+    bit<32> ext_route_tag;  // Route tag for policy
+};
+
+/​**​
+ * OSPF Transport Header (IP)
+ */
+header ospf_transport {
+    bit<8>  tos;            // Type of service (typically 0)
+    bit<16> length;         // IP packet length
+    bit<16> id;             // IP identification
+    bit<16> frag_offset;    // Fragmentation offset
+    bit<8>  ttl;            // Time to live (typically 1 for local networks)
+    bit<8>  protocol = 89;  // OSPF protocol number
+    bit<16> checksum;       // IP header checksum
+    bit<32> src_addr;       // Source IP address
+    bit<32> dest_addr;      // Destination IP address (224.0.0.5/6 for multicast)
+};
+
+/​**​
+ * P4 Parser Logic for OSPF
+ */
+parser ospf_parser(packet_in pkt, out headers hdr) {
+    state start {
+        pkt.extract(hdr.ospf_transport);
+        transition select(hdr.ospf_transport.protocol) {
+            89: parse_ospf;
+            default: accept;
+        }
+    }
+    
+    state parse_ospf {
+        pkt.extract(hdr.ospf_header);
+        transition select(hdr.ospf_header.type) {
+            HELLO: parse_ospf_hello;
+            DB_DESC: parse_ospf_db_desc;
+            LS_REQ: parse_ospf_ls_req;
+            LS_UPDATE: parse_ospf_ls_update;
+            LS_ACK: parse_ospf_ls_ack;
+            default: accept;
+        }
+    }
+    
+    // Additional parse states for each packet type...
+}
+
+/​**​
+ * P4 Match-Action Pipeline for OSPF
+ */
+control ospf_control(inout headers hdr) {
+    action process_hello() {
+        // Process HELLO packet and update neighbor state
+    }
+    
+    action process_db_desc() {
+        // Process database description and determine LSDB sync state
+    }
+    
+    action process_ls_update() {
+        // Process LSAs and update link-state database
+    }
+    
+    table ospf_packet_handling {
+        key = {
+            hdr.ospf_header.type: exact;
+        }
+        actions = {
+            process_hello;
+            process_db_desc;
+            process_ls_update;
+            NoAction;
+        }
+        default_action = NoAction;
+    }
+    
+    apply {
+        ospf_packet_handling.apply();
+    }
 }
