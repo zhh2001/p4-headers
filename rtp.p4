@@ -1,8 +1,21 @@
 /​**​
  * RTP Header Definition in P4
  * RTP 报头 P4 定义
+ * Real-time Transport Protocol for media streaming
+ * 实时传输协议
  */
 
+/* RTP Payload Types */
+enum rtp_payload {
+    PCMU = 7w0,
+    GSM  = 7w3,
+    G722 = 7w9,
+    OPUS = 7w96,
+};
+
+/​**​
+ * RTP Header
+ */
 header rtp_t {
     /* Version - 2 bits
      * 版本 - 2 位
